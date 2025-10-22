@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,9 +15,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/appleboy/drone-template-lib/template"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
+	tgbotapi "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 const (
@@ -308,24 +311,10 @@ func (p Plugin) Exec() (err error) {
 		}
 	}
 
-	var proxyURL *url.URL
-	if proxyURL, err = url.Parse(p.Config.Socks5); err != nil {
-		return fmt.Errorf("unable to unmarshall socks5 proxy url from string '%s': %v", p.Config.Socks5, err)
-	}
-
-	var bot *tgbotapi.BotAPI
-	if len(p.Config.Socks5) > 0 {
-		proxyClient := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
-		bot, err = tgbotapi.NewBotAPIWithClient(p.Config.Token, proxyClient)
-	} else {
-		bot, err = tgbotapi.NewBotAPI(p.Config.Token)
-	}
-
+	bot, err := p.newBot()
 	if err != nil {
 		return err
 	}
-
-	bot.Debug = p.Config.Debug
 
 	ids := parseTo(p.Config.To, p.Commit.Email, p.Config.MatchEmail)
 	photos := globList(trimElement(p.Config.Photo))
@@ -356,6 +345,7 @@ func (p Plugin) Exec() (err error) {
 		p.Repo.Name = escapeMarkdownOne(p.Repo.Name)
 	}
 
+	background := context.Background()
 	// send message.
 	for _, user := range ids {
 		for _, value := range message {
@@ -365,56 +355,112 @@ func (p Plugin) Exec() (err error) {
 			}
 
 			txt = html.UnescapeString(txt)
-
-			msg := tgbotapi.NewMessage(user, txt)
-			msg.ParseMode = p.Config.Format
-			msg.DisableWebPagePreview = p.Config.DisableWebPagePreview
-			msg.DisableNotification = p.Config.DisableNotification
-			if err := p.Send(bot, msg); err != nil {
+			_, err = bot.SendMessage(background, &tgbotapi.SendMessageParams{
+				ChatID:    user,
+				Text:      txt,
+				ParseMode: models.ParseMode(p.Config.Format),
+				LinkPreviewOptions: &models.LinkPreviewOptions{
+					IsDisabled: &p.Config.DisableWebPagePreview,
+				},
+				DisableNotification: p.Config.DisableNotification,
+			})
+			if err != nil {
 				return err
 			}
 		}
 
 		for _, value := range photos {
-			msg := tgbotapi.NewPhotoUpload(user, value)
-			if err := p.Send(bot, msg); err != nil {
+			f, err := os.Open(value)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, err = bot.SendPhoto(background, &tgbotapi.SendPhotoParams{
+				ChatID: user,
+				Photo:  &models.InputFileUpload{Filename: value, Data: f},
+			})
+			if err != nil {
 				return err
 			}
 		}
 
 		for _, value := range documents {
-			msg := tgbotapi.NewDocumentUpload(user, value)
-			if err := p.Send(bot, msg); err != nil {
+			f, err := os.Open(value)
+			if err != nil {
 				return err
+			}
+			defer f.Close()
+			_, err = bot.SendDocument(background, &tgbotapi.SendDocumentParams{
+				ChatID:              user,
+				Document:            &models.InputFileUpload{Filename: value, Data: f},
+				DisableNotification: p.Config.DisableNotification,
+			})
+			if err != nil {
+				return nil
 			}
 		}
 
 		for _, value := range stickers {
-			msg := tgbotapi.NewStickerUpload(user, value)
-			if err := p.Send(bot, msg); err != nil {
+			f, err := os.Open(value)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, err = bot.SendSticker(background, &tgbotapi.SendStickerParams{
+				ChatID:              user,
+				Sticker:             &models.InputFileUpload{Filename: value, Data: f},
+				DisableNotification: p.Config.DisableNotification,
+			})
+			if err != nil {
 				return err
 			}
 		}
 
 		for _, value := range audios {
-			msg := tgbotapi.NewAudioUpload(user, value)
-			msg.Title = "Audio Message."
-			if err := p.Send(bot, msg); err != nil {
+			f, err := os.Open(value)
+			if err != nil {
 				return err
 			}
+			defer f.Close()
+			_, err = bot.SendAudio(background, &tgbotapi.SendAudioParams{
+				ChatID:              user,
+				Audio:               &models.InputFileUpload{Filename: value, Data: f},
+				DisableNotification: p.Config.DisableNotification,
+			})
+			if err != nil {
+				return err
+			}
+
 		}
 
 		for _, value := range voices {
-			msg := tgbotapi.NewVoiceUpload(user, value)
-			if err := p.Send(bot, msg); err != nil {
+			f, err := os.Open(value)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, err = bot.SendVoice(background, &tgbotapi.SendVoiceParams{
+				ChatID:              user,
+				Voice:               &models.InputFileUpload{Filename: value, Data: f},
+				DisableNotification: p.Config.DisableNotification,
+			})
+			if err != nil {
 				return err
 			}
 		}
 
 		for _, value := range videos {
-			msg := tgbotapi.NewVideoUpload(user, value)
-			msg.Caption = "Video Message"
-			if err := p.Send(bot, msg); err != nil {
+			f, err := os.Open(value)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, err = bot.SendVideo(background, &tgbotapi.SendVideoParams{
+				ChatID:              user,
+				Video:               &models.InputFileUpload{Filename: value, Data: f},
+				DisableNotification: p.Config.DisableNotification,
+			})
+			if err != nil {
 				return err
 			}
 		}
@@ -426,8 +472,12 @@ func (p Plugin) Exec() (err error) {
 				continue
 			}
 
-			msg := tgbotapi.NewLocation(user, location.Latitude, location.Longitude)
-			if err := p.Send(bot, msg); err != nil {
+			_, err = bot.SendLocation(background, &tgbotapi.SendLocationParams{
+				ChatID:    user,
+				Latitude:  location.Latitude,
+				Longitude: location.Longitude,
+			})
+			if err != nil {
 				return err
 			}
 		}
@@ -439,31 +489,20 @@ func (p Plugin) Exec() (err error) {
 				continue
 			}
 
-			msg := tgbotapi.NewVenue(user, location.Title, location.Address, location.Latitude, location.Longitude)
-			if err := p.Send(bot, msg); err != nil {
+			_, err = bot.SendVenue(background, &tgbotapi.SendVenueParams{
+				ChatID:    user,
+				Title:     location.Title,
+				Address:   location.Address,
+				Latitude:  location.Latitude,
+				Longitude: location.Longitude,
+			})
+			if err != nil {
 				return err
 			}
 		}
 	}
 
 	return nil
-}
-
-// Send bot message.
-func (p Plugin) Send(bot *tgbotapi.BotAPI, msg tgbotapi.Chattable) error {
-	message, err := bot.Send(msg)
-
-	if p.Config.Debug {
-		log.Println("=====================")
-		log.Printf("Response Message: %#v\n", message)
-		log.Println("=====================")
-	}
-
-	if err == nil {
-		return nil
-	}
-
-	return errors.New(strings.ReplaceAll(err.Error(), p.Config.Token, "<token>"))
 }
 
 // Message is plugin default message.
@@ -495,4 +534,23 @@ func (p Plugin) Message() []string {
 		p.Commit.Message,
 		p.Build.Link,
 	)}
+}
+
+func (p Plugin) newBot() (*tgbotapi.Bot, error) {
+	var err error
+	var proxyURL *url.URL
+	if proxyURL, err = url.Parse(p.Config.Socks5); err != nil {
+		return nil, fmt.Errorf("unable to unmarshall socks5 proxy url from string '%s': %v", p.Config.Socks5, err)
+	}
+
+	var options []tgbotapi.Option
+	if len(p.Config.Socks5) > 0 {
+		proxyClient := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+		httpOpts := tgbotapi.WithHTTPClient(time.Minute, proxyClient)
+		options = append(options, httpOpts)
+	}
+	if p.Config.Debug {
+		options = append(options, tgbotapi.WithDebug())
+	}
+	return tgbotapi.New(p.Config.Token, options...)
 }
