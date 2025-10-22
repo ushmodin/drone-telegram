@@ -112,6 +112,11 @@ type (
 		Latitude  float64
 		Longitude float64
 	}
+
+	Chat struct {
+		ChatID          int64
+		MessageThreadID int
+	}
 )
 
 var icons = map[string]string{
@@ -224,41 +229,54 @@ func loadTextFromFile(filename string) ([]string, error) {
 	return []string{string(content)}, nil
 }
 
-func parseTo(to []string, authorEmail string, matchEmail bool) []int64 {
-	var emails []int64
-	var ids []int64
+func parseTo(to []string, authorEmail string, matchEmail bool) []Chat {
+	var emails []Chat
+	var chats []Chat
 	attachEmail := true
 
 	for _, value := range trimElement(to) {
-		idArray := trimElement(strings.Split(value, ":"))
+		items := trimElement(strings.Split(value, ":"))
+
+		chatStr := items[0]
+		var threadStr string
+
+		if strings.Contains(chatStr, "#") {
+			pos := strings.Index(chatStr, "#")
+			threadStr = chatStr[pos+1:]
+			chatStr = chatStr[:pos]
+		}
 
 		// check id
-		id, err := strconv.ParseInt(idArray[0], 10, 64)
+		id, err := strconv.ParseInt(chatStr, 10, 64)
 		if err != nil {
 			continue
 		}
+		thread, err := strconv.ParseInt(threadStr, 10, 32)
+		if err != nil {
+			thread = 0
+		}
 
 		// check match author email
-		if len(idArray) > 1 {
-			if email := idArray[1]; email != authorEmail {
+		if len(items) > 1 {
+			if email := items[1]; email != authorEmail {
 				continue
 			}
 
-			emails = append(emails, id)
+			emails = append(emails, Chat{ChatID: id, MessageThreadID: int(thread)})
 			attachEmail = false
 			continue
 		}
 
-		ids = append(ids, id)
+		chats = append(chats, Chat{ChatID: id, MessageThreadID: int(thread)})
 	}
 
 	if matchEmail && !attachEmail {
 		return emails
 	}
 
-	ids = append(ids, emails...)
+	chats = append(chats, emails...)
 
-	return ids
+	return chats
 }
 
 func templateMessage(t string, plugin Plugin) (string, error) {
@@ -316,7 +334,7 @@ func (p Plugin) Exec() (err error) {
 		return err
 	}
 
-	ids := parseTo(p.Config.To, p.Commit.Email, p.Config.MatchEmail)
+	chats := parseTo(p.Config.To, p.Commit.Email, p.Config.MatchEmail)
 	photos := globList(trimElement(p.Config.Photo))
 	documents := globList(trimElement(p.Config.Document))
 	stickers := globList(trimElement(p.Config.Sticker))
@@ -347,7 +365,7 @@ func (p Plugin) Exec() (err error) {
 
 	background := context.Background()
 	// send message.
-	for _, user := range ids {
+	for _, chat := range chats {
 		for _, value := range message {
 			txt, err := templateMessage(value, p)
 			if err != nil {
@@ -356,9 +374,10 @@ func (p Plugin) Exec() (err error) {
 
 			txt = html.UnescapeString(txt)
 			_, err = bot.SendMessage(background, &tgbotapi.SendMessageParams{
-				ChatID:    user,
-				Text:      txt,
-				ParseMode: models.ParseMode(p.Config.Format),
+				ChatID:          chat.ChatID,
+				MessageThreadID: chat.MessageThreadID,
+				Text:            txt,
+				ParseMode:       models.ParseMode(p.Config.Format),
 				LinkPreviewOptions: &models.LinkPreviewOptions{
 					IsDisabled: &p.Config.DisableWebPagePreview,
 				},
@@ -376,8 +395,9 @@ func (p Plugin) Exec() (err error) {
 			}
 			defer f.Close()
 			_, err = bot.SendPhoto(background, &tgbotapi.SendPhotoParams{
-				ChatID: user,
-				Photo:  &models.InputFileUpload{Filename: value, Data: f},
+				ChatID:          chat.ChatID,
+				MessageThreadID: chat.MessageThreadID,
+				Photo:           &models.InputFileUpload{Filename: value, Data: f},
 			})
 			if err != nil {
 				return err
@@ -391,7 +411,8 @@ func (p Plugin) Exec() (err error) {
 			}
 			defer f.Close()
 			_, err = bot.SendDocument(background, &tgbotapi.SendDocumentParams{
-				ChatID:              user,
+				ChatID:              chat.ChatID,
+				MessageThreadID:     chat.MessageThreadID,
 				Document:            &models.InputFileUpload{Filename: value, Data: f},
 				DisableNotification: p.Config.DisableNotification,
 			})
@@ -407,7 +428,8 @@ func (p Plugin) Exec() (err error) {
 			}
 			defer f.Close()
 			_, err = bot.SendSticker(background, &tgbotapi.SendStickerParams{
-				ChatID:              user,
+				ChatID:              chat.ChatID,
+				MessageThreadID:     chat.MessageThreadID,
 				Sticker:             &models.InputFileUpload{Filename: value, Data: f},
 				DisableNotification: p.Config.DisableNotification,
 			})
@@ -423,7 +445,8 @@ func (p Plugin) Exec() (err error) {
 			}
 			defer f.Close()
 			_, err = bot.SendAudio(background, &tgbotapi.SendAudioParams{
-				ChatID:              user,
+				ChatID:              chat.ChatID,
+				MessageThreadID:     chat.MessageThreadID,
 				Audio:               &models.InputFileUpload{Filename: value, Data: f},
 				DisableNotification: p.Config.DisableNotification,
 			})
@@ -440,7 +463,8 @@ func (p Plugin) Exec() (err error) {
 			}
 			defer f.Close()
 			_, err = bot.SendVoice(background, &tgbotapi.SendVoiceParams{
-				ChatID:              user,
+				ChatID:              chat.ChatID,
+				MessageThreadID:     chat.MessageThreadID,
 				Voice:               &models.InputFileUpload{Filename: value, Data: f},
 				DisableNotification: p.Config.DisableNotification,
 			})
@@ -456,7 +480,8 @@ func (p Plugin) Exec() (err error) {
 			}
 			defer f.Close()
 			_, err = bot.SendVideo(background, &tgbotapi.SendVideoParams{
-				ChatID:              user,
+				ChatID:              chat.ChatID,
+				MessageThreadID:     chat.MessageThreadID,
 				Video:               &models.InputFileUpload{Filename: value, Data: f},
 				DisableNotification: p.Config.DisableNotification,
 			})
@@ -473,9 +498,10 @@ func (p Plugin) Exec() (err error) {
 			}
 
 			_, err = bot.SendLocation(background, &tgbotapi.SendLocationParams{
-				ChatID:    user,
-				Latitude:  location.Latitude,
-				Longitude: location.Longitude,
+				ChatID:          chat.ChatID,
+				MessageThreadID: chat.MessageThreadID,
+				Latitude:        location.Latitude,
+				Longitude:       location.Longitude,
 			})
 			if err != nil {
 				return err
@@ -490,11 +516,12 @@ func (p Plugin) Exec() (err error) {
 			}
 
 			_, err = bot.SendVenue(background, &tgbotapi.SendVenueParams{
-				ChatID:    user,
-				Title:     location.Title,
-				Address:   location.Address,
-				Latitude:  location.Latitude,
-				Longitude: location.Longitude,
+				ChatID:          chat.ChatID,
+				MessageThreadID: chat.MessageThreadID,
+				Title:           location.Title,
+				Address:         location.Address,
+				Latitude:        location.Latitude,
+				Longitude:       location.Longitude,
 			})
 			if err != nil {
 				return err
